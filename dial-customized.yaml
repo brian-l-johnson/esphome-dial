@@ -1,10 +1,11 @@
 # Load secrets from secrets.yaml
 substitutions:
   <<: !include secrets.yaml
+  media_player_entity: media_player.plex_plexamp_office
 
 esphome:
-  name: workshop-rotary-test
-  friendly_name: workshop-rotary-test
+  name: office-dial
+  friendly_name: office-dial
   on_boot:
     priority: 100
     then:
@@ -23,19 +24,6 @@ api:
 
 ota:
   - platform: esphome
-
-globals:
-  - id: screenwidth
-    type: int
-    restore_value: no
-  - id: max_rotary_value
-    type: int
-    restore_value: no
-    initial_value: '1'
-  - id: min_rotary_value
-    type: int
-    restore_value: no
-    initial_value: '100'
 
 external_components:
   - source: github://dgaust/esphome@gc9a01
@@ -59,49 +47,7 @@ esp32:
 logger:
   level: DEBUG
 
-color:
-  - id: my_red
-    red: 100%
-    green: 3%
-    blue: 5%
-  - id: my_green
-    hex: 59981A
-  - id: my_blue
-    red: 3%
-    green: 5%
-    blue: 100%
-  - id: my_yellow
-    hex: FFFF00 
-  - id: my_light_blue
-    hex: 145DA0
-  - id: my_light_red
-    hex: fc6d6d
-  - id: my_light_orange
-    hex: FD7F20
-  - id: my_light_yellow
-    hex: B58B00
-
 image:
-  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/volume-variant-off.svg
-    id: volume_mute
-    resize: 40x40
-    type: BINARY
-  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/volume-low.svg
-    id: volume_notmute
-    resize: 40x40
-    type: BINARY
-  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/knob.svg
-    id: volumeknob
-    resize: 80x80
-    type: BINARY
-  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/volume-low.svg
-    id: volume_notmute_80
-    resize: 80x80
-    type: BINARY
-  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/volume-variant-off.svg
-    id: volume_mute_80
-    resize: 80x80
-    type: BINARY
   - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/play.svg
     id: media_play
     resize: 80x80
@@ -116,10 +62,6 @@ image:
     type: BINARY
 
 font:
-  - file: "fonts/arial.ttf"
-    id: my_font
-    size: 40
-
   - file: "gfonts://Roboto"
     id: roboto16
     size: 16
@@ -203,7 +145,7 @@ display:
         {
           it.strftime(halfscreenwidth, halfscreenheight-70, id(roboto24), TextAlign::TOP_CENTER, "%a %b %d", id(esptime).now());
           it.strftime(halfscreenwidth, halfscreenheight-40, id(roboto60), TextAlign::TOP_CENTER, "%H:%M", id(esptime).now());
-          it.printf(halfscreenwidth, halfscreenheight+30, id(roboto24), TextAlign::TOP_CENTER, "%.1f °F-", id(air_temp).state);
+          it.printf(halfscreenwidth, halfscreenheight+30, id(roboto24), TextAlign::TOP_CENTER, "%.1f °F", id(air_temp).state);
                   
         }
 
@@ -236,15 +178,15 @@ binary_sensor:
                   - homeassistant.service:
                      service: media_player.media_pause
                      data:
-                      entity_id: media_player.plex_plexamp_office
+                      entity_id: ${media_player_entity}
                 else:
-                  - logger.log: 
+                  - logger.log:
                       format: "(in unpause) The mediaplayer sensor reports value %s"
                       args: [ 'id(mediastate).state' ]
                   - homeassistant.service:
                      service: media_player.media_play
                      data:
-                      entity_id: media_player.plex_plexamp_office
+                      entity_id: ${media_player_entity}
 
 
   - platform: template
@@ -269,32 +211,34 @@ sensor:
        input: true
        pullup: true
     accuracy_decimals: 1
-    on_clockwise: 
+    on_clockwise:
        - rtttl.play: quick_e:d=4,o=5,b=100:16e6
        - homeassistant.service:
            service: media_player.volume_up
            data:
-             entity_id: media_player.plex_plexamp_office
+             entity_id: ${media_player_entity}
     on_anticlockwise:
        - rtttl.play: quick_d:d=4,o=5,b=100:16d6
        - homeassistant.service:
            service: media_player.volume_down
            data:
-             entity_id: media_player.plex_plexamp_office
+             entity_id: ${media_player_entity}
 
 
   
   - platform: homeassistant
     name: "Media Volume"
     id: "beam_volume"
-    entity_id: media_player.plex_plexamp_office
+    entity_id: ${media_player_entity}
     attribute: volume_level
-    
+    internal: true
+
   - platform: homeassistant
     name: "Air Temperature"
     id: "air_temp"
     entity_id: weather.alison_way
     attribute: temperature
+    internal: true
     
   
     
@@ -309,7 +253,6 @@ output:
   - id: oledbacklight
     platform: ledc
     pin: GPIO9
-    #pin: GPIO21
     max_power: 1
     min_power: 0
     
@@ -327,31 +270,35 @@ text_sensor:
   - platform: homeassistant
     name: "Media Player Mute"
     id: "mediaplayermute"
-    entity_id: media_player.plex_plexamp_office
+    entity_id: ${media_player_entity}
     attribute: is_volume_muted
+    internal: true
     on_value:
       then:
         - component.update: my_lcd
   - platform: homeassistant
     name: "Media State"
     id: "mediastate"
-    entity_id: media_player.plex_plexamp_office
+    entity_id: ${media_player_entity}
+    internal: true
     on_value:
       then:
         - component.update: my_lcd
   - platform: homeassistant
     name: "Now Playing"
     id: "now_playing"
-    entity_id: media_player.plex_plexamp_office
+    entity_id: ${media_player_entity}
     attribute: media_title
+    internal: true
     on_value:
       then:
         - component.update: my_lcd
   - platform: homeassistant
     name: "Artist"
     id: "now_playing_artist"
-    entity_id: media_player.plex_plexamp_office
+    entity_id: ${media_player_entity}
     attribute: media_artist
+    internal: true
     on_value:
       then:
         - component.update: my_lcd
