@@ -19,9 +19,6 @@ esphome:
       - light.turn_on:
           id: backlight
           brightness: 70%
-      - binary_sensor.template.publish:
-          id: page1binary
-          state: true
 
 # Enable Home Assistant API
 api:
@@ -40,9 +37,6 @@ i2c:
   - id: bus_internal
     sda: GPIO11
     scl: GPIO12
-  - id: bus_porta
-    sda: GPIO13
-    scl: GPIO15
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -80,6 +74,10 @@ image:
     type: BINARY
   - file: images/music.svg
     id: music_icon
+    resize: 60x60
+    type: BINARY
+  - file: images/clock.svg
+    id: clock_icon
     resize: 60x60
     type: BINARY
   - file: images/lightbulb-on.svg
@@ -130,16 +128,14 @@ time:
 
 # Throttle display updates to improve performance
 interval:
-  - interval: 200ms
+  - interval: 1000ms
     then:
       - component.update: my_lcd
-  - interval: 1s
-    then:
       - lambda: |-
           if (id(volume_overlay_timer) > 0) {
             id(volume_overlay_timer) -= 1;
             if (id(volume_overlay_timer) == 0) {
-              id(my_lcd)->show_page(id(page1));
+              id(my_lcd)->show_page(id(page_music));
             }
           }
           if (id(lights_page_timer) > 0) {
@@ -156,6 +152,8 @@ rc522_i2c:
     then:
       - rtttl.play: "success:d=24,o=5,b=100:c,g,b"
       - homeassistant.tag_scanned: !lambda 'return x;'
+      - display.page.show: page_music
+      - component.update: my_lcd
 
 touchscreen:
   platform: ft63x6
@@ -180,37 +178,46 @@ display:
         float screenwidth = it.get_width();
         float halfscreenheight = screenheight / 2;
         float halfscreenwidth = screenwidth /2;
-        if (id(mediastate).state == "playing")
-        {
-          // Center play/pause icon
-          it.image(halfscreenwidth, halfscreenheight-80, media_play, ImageAlign::TOP_CENTER);
-          // Skip previous on left
-          it.image(30, halfscreenheight-55, skip_previous, ImageAlign::TOP_CENTER);
-          // Skip next on right
-          it.image(210, halfscreenheight-55, skip_next, ImageAlign::TOP_CENTER);
-          it.printf(halfscreenwidth, halfscreenheight + 35, id(roboto16), TextAlign::TOP_CENTER, id(now_playing).state.c_str());
-          it.printf(halfscreenwidth, halfscreenheight + 20, id(roboto16), TextAlign::TOP_CENTER, id(now_playing_artist).state.c_str());
 
-        }
-        else if (id(mediastate).state == "paused")
-        {
-          // Center play/pause icon
-          it.image(halfscreenwidth, halfscreenheight-80, media_paused, ImageAlign::TOP_CENTER);
-          // Skip previous on left
-          it.image(30, halfscreenheight-55, skip_previous, ImageAlign::TOP_CENTER);
-          // Skip next on right
-          it.image(210, halfscreenheight-55, skip_next, ImageAlign::TOP_CENTER);
-          it.printf(halfscreenwidth, halfscreenheight + 35, id(roboto16), TextAlign::TOP_CENTER, id(now_playing).state.c_str());
-          it.printf(halfscreenwidth, halfscreenheight + 20, id(roboto16), TextAlign::TOP_CENTER, id(now_playing_artist).state.c_str());
+        // Always show colored clock
+        // Date in cyan
+        it.print(halfscreenwidth, halfscreenheight-70, id(roboto24), Color(0, 200, 255), TextAlign::TOP_CENTER, id(esptime).now().strftime("%a %b %d").c_str());
+        // Time in white (larger)
+        it.print(halfscreenwidth, halfscreenheight-40, id(roboto60), Color(255, 255, 255), TextAlign::TOP_CENTER, id(esptime).now().strftime("%H:%M").c_str());
 
-        }
-        else
-        {
-          it.strftime(halfscreenwidth, halfscreenheight-70, id(roboto24), TextAlign::TOP_CENTER, "%a %b %d", id(esptime).now());
-          it.strftime(halfscreenwidth, halfscreenheight-40, id(roboto60), TextAlign::TOP_CENTER, "%H:%M", id(esptime).now());
-          it.printf(halfscreenwidth, halfscreenheight+30, id(roboto24), TextAlign::TOP_CENTER, "%.1f °F", id(air_temp).state);
+        // Temperature with dynamic color based on temp value (Minnesota scale)
+        float temp = id(air_temp).state;
+        Color temp_color;
 
+        if (temp < -20) {
+          temp_color = Color(150, 0, 255);  // Extreme cold - Purple
+        } else if (temp < -10) {
+          temp_color = Color(100, 0, 200);  // Dangerous cold - Indigo
+        } else if (temp < 0) {
+          temp_color = Color(0, 50, 255);   // Very cold - Dark blue
+        } else if (temp < 10) {
+          temp_color = Color(0, 100, 255);  // Cold - Blue
+        } else if (temp < 20) {
+          temp_color = Color(0, 150, 255);  // Quite cold - Light blue
+        } else if (temp < 32) {
+          temp_color = Color(0, 200, 255);  // Freezing - Cyan blue
+        } else if (temp < 45) {
+          temp_color = Color(0, 255, 200);  // Chilly - Cyan
+        } else if (temp < 60) {
+          temp_color = Color(100, 255, 180);  // Cool - Light cyan/green
+        } else if (temp < 70) {
+          temp_color = Color(100, 255, 100);  // Mild - Green
+        } else if (temp < 80) {
+          temp_color = Color(255, 220, 0);  // Warm - Yellow
+        } else if (temp < 90) {
+          temp_color = Color(255, 120, 0);  // Hot - Orange
+        } else {
+          temp_color = Color(255, 30, 0);   // Very hot - Red
         }
+
+        char temp_str[32];
+        sprintf(temp_str, "%.1f °F", temp);
+        it.print(halfscreenwidth, halfscreenheight+30, id(roboto24), temp_color, TextAlign::TOP_CENTER, temp_str);
 
     - id: page_menu
       lambda: |-
@@ -222,13 +229,17 @@ display:
         // Title
         it.printf(halfscreenwidth, 30, id(roboto24), TextAlign::TOP_CENTER, "Menu");
 
-        // Left half - Lights
-        it.rectangle(10, 80, 100, 100);
-        it.image(60, 125, lightbulb_icon, ImageAlign::CENTER);
+        // Left - Lights
+        it.rectangle(5, 80, 70, 100);
+        it.image(40, 125, lightbulb_icon, ImageAlign::CENTER);
 
-        // Right half - Music
-        it.rectangle(130, 80, 100, 100);
-        it.image(180, 125, music_icon, ImageAlign::CENTER);
+        // Center - Clock
+        it.rectangle(85, 80, 70, 100);
+        it.image(120, 125, clock_icon, ImageAlign::CENTER);
+
+        // Right - Music
+        it.rectangle(165, 80, 70, 100);
+        it.image(200, 125, music_icon, ImageAlign::CENTER);
 
     - id: page_lights
       lambda: |-
@@ -254,6 +265,42 @@ display:
           it.printf(halfscreenwidth, halfscreenheight+30, id(roboto24), TextAlign::TOP_CENTER, "Off");
         }
 
+    - id: page_music
+      lambda: |-
+        float screenheight = it.get_height();
+        float screenwidth = it.get_width();
+        float halfscreenheight = screenheight / 2;
+        float halfscreenwidth = screenwidth /2;
+
+        if (id(mediastate).state == "playing")
+        {
+          // Center play/pause icon
+          it.image(halfscreenwidth, halfscreenheight-80, media_play, ImageAlign::TOP_CENTER);
+          // Skip previous on left
+          it.image(30, halfscreenheight-55, skip_previous, ImageAlign::TOP_CENTER);
+          // Skip next on right
+          it.image(210, halfscreenheight-55, skip_next, ImageAlign::TOP_CENTER);
+          it.printf(halfscreenwidth, halfscreenheight + 35, id(roboto16), TextAlign::TOP_CENTER, id(now_playing).state.c_str());
+          it.printf(halfscreenwidth, halfscreenheight + 20, id(roboto16), TextAlign::TOP_CENTER, id(now_playing_artist).state.c_str());
+        }
+        else if (id(mediastate).state == "paused")
+        {
+          // Center play/pause icon
+          it.image(halfscreenwidth, halfscreenheight-80, media_paused, ImageAlign::TOP_CENTER);
+          // Skip previous on left
+          it.image(30, halfscreenheight-55, skip_previous, ImageAlign::TOP_CENTER);
+          // Skip next on right
+          it.image(210, halfscreenheight-55, skip_next, ImageAlign::TOP_CENTER);
+          it.printf(halfscreenwidth, halfscreenheight + 35, id(roboto16), TextAlign::TOP_CENTER, id(now_playing).state.c_str());
+          it.printf(halfscreenwidth, halfscreenheight + 20, id(roboto16), TextAlign::TOP_CENTER, id(now_playing_artist).state.c_str());
+        }
+        else
+        {
+          // Media off - show icon
+          it.image(halfscreenwidth, halfscreenheight-40, media_off, ImageAlign::TOP_CENTER);
+          it.printf(halfscreenwidth, halfscreenheight+50, id(roboto24), TextAlign::TOP_CENTER, "No Media Playing");
+        }
+
     - id: page_volume
       lambda: |-
         float screenheight = it.get_height();
@@ -275,6 +322,11 @@ display:
               id: rotaryencoder
               value: !lambda 'return id(media_volume).state * 100 / ${volume_step};'
           - component.update: my_lcd
+      - to: page_music
+        then:
+          - sensor.rotary_encoder.set_value:
+              id: rotaryencoder
+              value: !lambda 'return (int)(id(media_volume).state * 100.0 / ${volume_step});'
       - to: page_lights
         then:
           - sensor.rotary_encoder.set_value:
@@ -322,10 +374,6 @@ binary_sensor:
 
 
   - platform: template
-    name: "Page 1 Active"
-    id: page1binary
-
-  - platform: template
     name: "Lights Page Active"
     id: lights_page_active
 
@@ -341,7 +389,7 @@ binary_sensor:
       then:
         - if:
             condition:
-              - display.is_displaying_page: page1
+              - display.is_displaying_page: page_music
             then:
               - logger.log: "Skip Previous touched"
               - homeassistant.service:
@@ -361,7 +409,7 @@ binary_sensor:
       then:
         - if:
             condition:
-              - display.is_displaying_page: page1
+              - display.is_displaying_page: page_music
             then:
               - logger.log: "Play/Pause touched"
               - homeassistant.service:
@@ -381,7 +429,7 @@ binary_sensor:
       then:
         - if:
             condition:
-              - display.is_displaying_page: page1
+              - display.is_displaying_page: page_music
             then:
               - logger.log: "Skip Next touched"
               - homeassistant.service:
@@ -393,8 +441,8 @@ binary_sensor:
   - platform: touchscreen
     name: "Menu Lights Button"
     internal: true
-    x_min: 10
-    x_max: 110
+    x_min: 5
+    x_max: 75
     y_min: 80
     y_max: 180
     on_press:
@@ -407,12 +455,30 @@ binary_sensor:
               - display.page.show: page_lights
               - component.update: my_lcd
 
+  # Menu page - Center button (Clock)
+  - platform: touchscreen
+    name: "Menu Clock Button"
+    internal: true
+    x_min: 85
+    x_max: 155
+    y_min: 80
+    y_max: 180
+    on_press:
+      then:
+        - if:
+            condition:
+              - display.is_displaying_page: page_menu
+            then:
+              - logger.log: "Clock selected"
+              - display.page.show: page1
+              - component.update: my_lcd
+
   # Menu page - Right button (Music)
   - platform: touchscreen
     name: "Menu Music Button"
     internal: true
-    x_min: 130
-    x_max: 230
+    x_min: 165
+    x_max: 235
     y_min: 80
     y_max: 180
     on_press:
@@ -422,7 +488,7 @@ binary_sensor:
               - display.is_displaying_page: page_menu
             then:
               - logger.log: "Music selected"
-              - display.page.show: page1
+              - display.page.show: page_music
               - component.update: my_lcd
 
   # Lights page - Full screen toggle
@@ -473,7 +539,7 @@ sensor:
       - if:
           condition:
             or:
-              - display.is_displaying_page: page1
+              - display.is_displaying_page: page_music
               - display.is_displaying_page: page_volume
           then:
             - homeassistant.service:
@@ -484,7 +550,7 @@ sensor:
             - display.page.show: page_volume
             - globals.set:
                 id: volume_overlay_timer
-                value: '2'
+                value: '4'
       - if:
           condition:
             and:
@@ -504,7 +570,7 @@ sensor:
       - if:
           condition:
             or:
-              - display.is_displaying_page: page1
+              - display.is_displaying_page: page_music
               - display.is_displaying_page: page_volume
           then:
             - homeassistant.service:
@@ -515,7 +581,7 @@ sensor:
             - display.page.show: page_volume
             - globals.set:
                 id: volume_overlay_timer
-                value: '2'
+                value: '4'
       - if:
           condition:
             and:
