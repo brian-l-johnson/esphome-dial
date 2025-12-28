@@ -142,6 +142,12 @@ interval:
               id(my_lcd)->show_page(id(page1));
             }
           }
+          if (id(lights_page_timer) > 0) {
+            id(lights_page_timer) -= 1;
+            if (id(lights_page_timer) == 0) {
+              id(my_lcd)->show_page(id(page1));
+            }
+          }
 
 rc522_i2c:
   i2c_id:  bus_internal
@@ -267,7 +273,7 @@ display:
         then:
           - sensor.rotary_encoder.set_value:
               id: rotaryencoder
-              value: !lambda 'return id(beam_volume).state * 100 / ${volume_step};'
+              value: !lambda 'return id(media_volume).state * 100 / ${volume_step};'
           - component.update: my_lcd
       - to: page_lights
         then:
@@ -282,9 +288,16 @@ display:
           - binary_sensor.template.publish:
               id: lights_page_active
               state: true
+          - globals.set:
+              id: lights_page_timer
+              value: '10'
 
 globals:
   - id: volume_overlay_timer
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: lights_page_timer
     type: int
     restore_value: no
     initial_value: '0'
@@ -319,6 +332,7 @@ binary_sensor:
   # Left button - Skip Previous (only on media page)
   - platform: touchscreen
     name: "Skip Previous Button"
+    internal: true
     x_min: 0
     x_max: 80
     y_min: 60
@@ -338,6 +352,7 @@ binary_sensor:
   # Center button - Play/Pause (only on media page)
   - platform: touchscreen
     name: "Play Pause Button"
+    internal: true
     x_min: 80
     x_max: 160
     y_min: 60
@@ -349,23 +364,15 @@ binary_sensor:
               - display.is_displaying_page: page1
             then:
               - logger.log: "Play/Pause touched"
-              - if:
-                  condition:
-                    lambda: return id(mediastate).state == "playing";
-                  then:
-                    - homeassistant.service:
-                        service: media_player.media_pause
-                        data:
-                          entity_id: ${media_player_entity}
-                  else:
-                    - homeassistant.service:
-                        service: media_player.media_play
-                        data:
-                          entity_id: ${media_player_entity}
+              - homeassistant.service:
+                  service: media_player.media_play_pause
+                  data:
+                    entity_id: ${media_player_entity}
 
   # Right button - Skip Next (only on media page)
   - platform: touchscreen
     name: "Skip Next Button"
+    internal: true
     x_min: 160
     x_max: 240
     y_min: 60
@@ -385,6 +392,7 @@ binary_sensor:
   # Menu page - Left button (Lights)
   - platform: touchscreen
     name: "Menu Lights Button"
+    internal: true
     x_min: 10
     x_max: 110
     y_min: 80
@@ -402,6 +410,7 @@ binary_sensor:
   # Menu page - Right button (Music)
   - platform: touchscreen
     name: "Menu Music Button"
+    internal: true
     x_min: 130
     x_max: 230
     y_min: 80
@@ -419,6 +428,7 @@ binary_sensor:
   # Lights page - Full screen toggle
   - platform: touchscreen
     name: "Lights Toggle Button"
+    internal: true
     x_min: 0
     x_max: 240
     y_min: 60
@@ -436,6 +446,9 @@ binary_sensor:
                   service: light.toggle
                   data:
                     entity_id: ${lights_entity}
+              - globals.set:
+                  id: lights_page_timer
+                  value: '10'
 
 
 sensor:
@@ -474,13 +487,18 @@ sensor:
                 value: '2'
       - if:
           condition:
-            - display.is_displaying_page: page_lights
+            and:
+              - display.is_displaying_page: page_lights
+              - lambda: 'return id(rotaryencoder).state > 0;'
           then:
             - homeassistant.service:
                 service: light.turn_on
                 data:
                   entity_id: ${lights_entity}
                   brightness_pct: !lambda 'return id(rotaryencoder).state * ${brightness_step};'
+            - globals.set:
+                id: lights_page_timer
+                value: '10'
     on_anticlockwise:
       - rtttl.play: quick_d:d=4,o=5,b=100:16d6
       - if:
@@ -500,17 +518,35 @@ sensor:
                 value: '2'
       - if:
           condition:
-            - display.is_displaying_page: page_lights
+            and:
+              - display.is_displaying_page: page_lights
+              - lambda: 'return id(rotaryencoder).state > 0;'
           then:
             - homeassistant.service:
                 service: light.turn_on
                 data:
                   entity_id: ${lights_entity}
                   brightness_pct: !lambda 'return id(rotaryencoder).state * ${brightness_step};'
+            - globals.set:
+                id: lights_page_timer
+                value: '10'
+      - if:
+          condition:
+            and:
+              - display.is_displaying_page: page_lights
+              - lambda: 'return id(rotaryencoder).state == 0;'
+          then:
+            - homeassistant.service:
+                service: light.turn_off
+                data:
+                  entity_id: ${lights_entity}
+            - globals.set:
+                id: lights_page_timer
+                value: '10'
 
   - platform: homeassistant
     name: "Media Volume"
-    id: "beam_volume"
+    id: "media_volume"
     entity_id: ${media_player_entity}
     attribute: volume_level
     internal: true
@@ -554,12 +590,6 @@ rtttl:
   output: buzzer_out
 
 text_sensor:
-  - platform: homeassistant
-    name: "Media Player Mute"
-    id: "mediaplayermute"
-    entity_id: ${media_player_entity}
-    attribute: is_volume_muted
-    internal: true
   - platform: homeassistant
     name: "Media State"
     id: "mediastate"
