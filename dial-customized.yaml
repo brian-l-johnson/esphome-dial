@@ -2,6 +2,12 @@
 substitutions:
   <<: !include secrets.yaml
   media_player_entity: media_player.plex_plexamp_office
+  lights_entity: light.office_lights
+  brightness_step: "10"
+  volume_step: "5"
+  weather_entity: weather.alison_way
+  # Encoder max value: 100 / smallest step (must be the smaller of brightness_step and volume_step)
+  encoder_max: "20"  # 100 / 5 = 20
 
 esphome:
   name: office-dial
@@ -9,13 +15,13 @@ esphome:
   on_boot:
     priority: 100
     then:
-     - logger.log: "Startup - Backlight on"
-     - light.turn_on:
-         id: backlight
-         brightness: 70%
-     - lambda: |-
-          id(page1binary).publish_state(true);
-        # Formatted:
+      - logger.log: "Startup - Backlight on"
+      - light.turn_on:
+          id: backlight
+          brightness: 70%
+      - binary_sensor.template.publish:
+          id: page1binary
+          state: true
 
 # Enable Home Assistant API
 api:
@@ -28,6 +34,7 @@ ota:
 external_components:
   - source: github://dgaust/esphome@gc9a01
     components: [ gc9a01 ]
+    refresh: 0s
 
 i2c:
   - id: bus_internal
@@ -36,7 +43,6 @@ i2c:
   - id: bus_porta
     sda: GPIO13
     scl: GPIO15
-#  interrupt: 14
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -45,19 +51,43 @@ esp32:
 
 # Enable logging
 logger:
-  level: DEBUG
+  level: INFO
 
 image:
-  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/play.svg
+  - file: images/play.svg
     id: media_play
     resize: 80x80
     type: BINARY
-  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/pause.svg
+  - file: images/pause.svg
     id: media_paused
     resize: 80x80
     type: BINARY
-  - file: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/power-off.svg
+  - file: images/power-off.svg
     id: media_off
+    resize: 80x80
+    type: BINARY
+  - file: images/skip-previous.svg
+    id: skip_previous
+    resize: 50x50
+    type: BINARY
+  - file: images/skip-next.svg
+    id: skip_next
+    resize: 50x50
+    type: BINARY
+  - file: images/lightbulb.svg
+    id: lightbulb_icon
+    resize: 60x60
+    type: BINARY
+  - file: images/music.svg
+    id: music_icon
+    resize: 60x60
+    type: BINARY
+  - file: images/lightbulb-on.svg
+    id: lightbulb_on
+    resize: 80x80
+    type: BINARY
+  - file: images/lightbulb-off.svg
+    id: lightbulb_off
     resize: 80x80
     type: BINARY
 
@@ -80,19 +110,17 @@ font:
   - file: "gfonts://Roboto"
     id: roboto40
     size: 40
-    glyphs: "!\"#%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~ °àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ"
+    glyphs: "0123456789%"
 
   - file: "gfonts://Roboto"
     id: roboto60
     size: 60
-    glyphs: "!\"#%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~ °àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ"
-
+    glyphs: "0123456789:%"
 
 # Wifi information
 wifi:
   ssid: !secret wifi_ssid
-  password: !secret wifi_password  
-
+  password: !secret wifi_password
 
 captive_portal:
 
@@ -100,7 +128,21 @@ time:
   - platform: homeassistant
     id: esptime
 
-  
+# Throttle display updates to improve performance
+interval:
+  - interval: 200ms
+    then:
+      - component.update: my_lcd
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(volume_overlay_timer) > 0) {
+            id(volume_overlay_timer) -= 1;
+            if (id(volume_overlay_timer) == 0) {
+              id(my_lcd)->show_page(id(page1));
+            }
+          }
+
 rc522_i2c:
   i2c_id:  bus_internal
   address: 0x28
@@ -108,6 +150,11 @@ rc522_i2c:
     then:
       - rtttl.play: "success:d=24,o=5,b=100:c,g,b"
       - homeassistant.tag_scanned: !lambda 'return x;'
+
+touchscreen:
+  platform: ft63x6
+  i2c_id: bus_internal
+  interrupt_pin: GPIO14
 
 spi:
   mosi_pin: GPIO5
@@ -129,14 +176,24 @@ display:
         float halfscreenwidth = screenwidth /2;
         if (id(mediastate).state == "playing")
         {
+          // Center play/pause icon
           it.image(halfscreenwidth, halfscreenheight-80, media_play, ImageAlign::TOP_CENTER);
+          // Skip previous on left
+          it.image(30, halfscreenheight-55, skip_previous, ImageAlign::TOP_CENTER);
+          // Skip next on right
+          it.image(210, halfscreenheight-55, skip_next, ImageAlign::TOP_CENTER);
           it.printf(halfscreenwidth, halfscreenheight + 35, id(roboto16), TextAlign::TOP_CENTER, id(now_playing).state.c_str());
           it.printf(halfscreenwidth, halfscreenheight + 20, id(roboto16), TextAlign::TOP_CENTER, id(now_playing_artist).state.c_str());
 
         }
         else if (id(mediastate).state == "paused")
         {
-          it.image(halfscreenwidth, halfscreenheight-80, media_paused, ImageAlign::TOP_CENTER);        
+          // Center play/pause icon
+          it.image(halfscreenwidth, halfscreenheight-80, media_paused, ImageAlign::TOP_CENTER);
+          // Skip previous on left
+          it.image(30, halfscreenheight-55, skip_previous, ImageAlign::TOP_CENTER);
+          // Skip next on right
+          it.image(210, halfscreenheight-55, skip_next, ImageAlign::TOP_CENTER);
           it.printf(halfscreenwidth, halfscreenheight + 35, id(roboto16), TextAlign::TOP_CENTER, id(now_playing).state.c_str());
           it.printf(halfscreenwidth, halfscreenheight + 20, id(roboto16), TextAlign::TOP_CENTER, id(now_playing_artist).state.c_str());
 
@@ -146,86 +203,311 @@ display:
           it.strftime(halfscreenwidth, halfscreenheight-70, id(roboto24), TextAlign::TOP_CENTER, "%a %b %d", id(esptime).now());
           it.strftime(halfscreenwidth, halfscreenheight-40, id(roboto60), TextAlign::TOP_CENTER, "%H:%M", id(esptime).now());
           it.printf(halfscreenwidth, halfscreenheight+30, id(roboto24), TextAlign::TOP_CENTER, "%.1f °F", id(air_temp).state);
-                  
+
         }
 
-        id(page1binary).publish_state(true);
+    - id: page_menu
+      lambda: |-
+        float screenheight = it.get_height();
+        float screenwidth = it.get_width();
+        float halfscreenheight = screenheight / 2;
+        float halfscreenwidth = screenwidth / 2;
+
+        // Title
+        it.printf(halfscreenwidth, 30, id(roboto24), TextAlign::TOP_CENTER, "Menu");
+
+        // Left half - Lights
+        it.rectangle(10, 80, 100, 100);
+        it.image(60, 125, lightbulb_icon, ImageAlign::CENTER);
+
+        // Right half - Music
+        it.rectangle(130, 80, 100, 100);
+        it.image(180, 125, music_icon, ImageAlign::CENTER);
+
+    - id: page_lights
+      lambda: |-
+        float screenheight = it.get_height();
+        float screenwidth = it.get_width();
+        float halfscreenheight = screenheight / 2;
+        float halfscreenwidth = screenwidth / 2;
+
+        // Title
+        it.printf(halfscreenwidth, 30, id(roboto24), TextAlign::TOP_CENTER, "Office Lights");
+
+        // Show light icon based on state
+        if (id(office_lights_state).state == "on")
+        {
+          it.image(halfscreenwidth, halfscreenheight-60, lightbulb_on, ImageAlign::TOP_CENTER);
+          // Show brightness percentage
+          float brightness_pct = (id(office_lights_brightness).state / 255.0) * 100.0;
+          it.printf(halfscreenwidth, halfscreenheight+30, id(roboto40), TextAlign::TOP_CENTER, "%.0f%%", brightness_pct);
+        }
+        else
+        {
+          it.image(halfscreenwidth, halfscreenheight-60, lightbulb_off, ImageAlign::TOP_CENTER);
+          it.printf(halfscreenwidth, halfscreenheight+30, id(roboto24), TextAlign::TOP_CENTER, "Off");
+        }
+
+    - id: page_volume
+      lambda: |-
+        float screenheight = it.get_height();
+        float screenwidth = it.get_width();
+        float halfscreenheight = screenheight / 2;
+        float halfscreenwidth = screenwidth / 2;
+
+        // Title
+        it.printf(halfscreenwidth, 30, id(roboto24), TextAlign::TOP_CENTER, "Volume");
+
+        // Show volume percentage calculated from encoder position
+        float volume_pct = id(rotaryencoder).state * ${volume_step};
+        it.printf(halfscreenwidth, halfscreenheight, id(roboto60), TextAlign::CENTER, "%.0f%%", volume_pct);
 
   on_page_change:
       - to: page1
         then:
           - sensor.rotary_encoder.set_value:
               id: rotaryencoder
-              value: !lambda 'return id(beam_volume).state * 100;'
+              value: !lambda 'return id(beam_volume).state * 100 / ${volume_step};'
           - component.update: my_lcd
+      - to: page_lights
+        then:
+          - sensor.rotary_encoder.set_value:
+              id: rotaryencoder
+              value: !lambda 'return id(office_lights_brightness).state / 255.0 * 100.0 / ${brightness_step};'
+          - component.update: my_lcd
+          - binary_sensor.template.publish:
+              id: lights_page_active
+              state: false
+          - delay: 500ms
+          - binary_sensor.template.publish:
+              id: lights_page_active
+              state: true
+
+globals:
+  - id: volume_overlay_timer
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 binary_sensor:
   - platform: gpio
     pin: GPIO42
-    name: "BacklightButton"
+    name: "MenuButton"
     on_press:
+      then:
         - if:
             condition:
               - display.is_displaying_page: page1
             then:
-              if:
-                condition:
-                  lambda: return id(mediastate).state == "playing";
-                then:
-                  - logger.log: 
-                      format: "(in pause) The mediaplayer sensor reports value %s"
-                      args: [ 'id(mediastate).state' ]
-                  - homeassistant.service:
-                     service: media_player.media_pause
-                     data:
-                      entity_id: ${media_player_entity}
-                else:
-                  - logger.log:
-                      format: "(in unpause) The mediaplayer sensor reports value %s"
-                      args: [ 'id(mediastate).state' ]
-                  - homeassistant.service:
-                     service: media_player.media_play
-                     data:
-                      entity_id: ${media_player_entity}
+              - logger.log: "Switching to menu page"
+              - display.page.show: page_menu
+              - component.update: my_lcd
+            else:
+              - logger.log: "Returning to main page"
+              - display.page.show: page1
+              - component.update: my_lcd
 
 
   - platform: template
     name: "Page 1 Active"
     id: page1binary
 
+  - platform: template
+    name: "Lights Page Active"
+    id: lights_page_active
+
+  # Left button - Skip Previous (only on media page)
+  - platform: touchscreen
+    name: "Skip Previous Button"
+    x_min: 0
+    x_max: 80
+    y_min: 60
+    y_max: 180
+    on_press:
+      then:
+        - if:
+            condition:
+              - display.is_displaying_page: page1
+            then:
+              - logger.log: "Skip Previous touched"
+              - homeassistant.service:
+                  service: media_player.media_previous_track
+                  data:
+                    entity_id: ${media_player_entity}
+
+  # Center button - Play/Pause (only on media page)
+  - platform: touchscreen
+    name: "Play Pause Button"
+    x_min: 80
+    x_max: 160
+    y_min: 60
+    y_max: 180
+    on_press:
+      then:
+        - if:
+            condition:
+              - display.is_displaying_page: page1
+            then:
+              - logger.log: "Play/Pause touched"
+              - if:
+                  condition:
+                    lambda: return id(mediastate).state == "playing";
+                  then:
+                    - homeassistant.service:
+                        service: media_player.media_pause
+                        data:
+                          entity_id: ${media_player_entity}
+                  else:
+                    - homeassistant.service:
+                        service: media_player.media_play
+                        data:
+                          entity_id: ${media_player_entity}
+
+  # Right button - Skip Next (only on media page)
+  - platform: touchscreen
+    name: "Skip Next Button"
+    x_min: 160
+    x_max: 240
+    y_min: 60
+    y_max: 180
+    on_press:
+      then:
+        - if:
+            condition:
+              - display.is_displaying_page: page1
+            then:
+              - logger.log: "Skip Next touched"
+              - homeassistant.service:
+                  service: media_player.media_next_track
+                  data:
+                    entity_id: ${media_player_entity}
+
+  # Menu page - Left button (Lights)
+  - platform: touchscreen
+    name: "Menu Lights Button"
+    x_min: 10
+    x_max: 110
+    y_min: 80
+    y_max: 180
+    on_press:
+      then:
+        - if:
+            condition:
+              - display.is_displaying_page: page_menu
+            then:
+              - logger.log: "Lights selected"
+              - display.page.show: page_lights
+              - component.update: my_lcd
+
+  # Menu page - Right button (Music)
+  - platform: touchscreen
+    name: "Menu Music Button"
+    x_min: 130
+    x_max: 230
+    y_min: 80
+    y_max: 180
+    on_press:
+      then:
+        - if:
+            condition:
+              - display.is_displaying_page: page_menu
+            then:
+              - logger.log: "Music selected"
+              - display.page.show: page1
+              - component.update: my_lcd
+
+  # Lights page - Full screen toggle
+  - platform: touchscreen
+    name: "Lights Toggle Button"
+    x_min: 0
+    x_max: 240
+    y_min: 60
+    y_max: 240
+    on_press:
+      then:
+        - if:
+            condition:
+              and:
+                - display.is_displaying_page: page_lights
+                - binary_sensor.is_on: lights_page_active
+            then:
+              - logger.log: "Toggling office lights"
+              - homeassistant.service:
+                  service: light.toggle
+                  data:
+                    entity_id: ${lights_entity}
+
 
 sensor:
   - platform: rotary_encoder
     name: "Rotary Encoder"
     id: rotaryencoder
-    max_value: 100
+    max_value: ${encoder_max}
     min_value: 0
-    pin_a: 
+    pin_a:
       number: GPIO40
       mode:
        input: true
        pullup: true
-    pin_b: 
+    pin_b:
       number: GPIO41
       mode:
        input: true
        pullup: true
-    accuracy_decimals: 1
+    accuracy_decimals: 0
     on_clockwise:
-       - rtttl.play: quick_e:d=4,o=5,b=100:16e6
-       - homeassistant.service:
-           service: media_player.volume_up
-           data:
-             entity_id: ${media_player_entity}
+      - rtttl.play: quick_e:d=4,o=5,b=100:16e6
+      - if:
+          condition:
+            or:
+              - display.is_displaying_page: page1
+              - display.is_displaying_page: page_volume
+          then:
+            - homeassistant.service:
+                service: media_player.volume_set
+                data:
+                  entity_id: ${media_player_entity}
+                  volume_level: !lambda 'return id(rotaryencoder).state * ${volume_step} / 100.0;'
+            - display.page.show: page_volume
+            - globals.set:
+                id: volume_overlay_timer
+                value: '2'
+      - if:
+          condition:
+            - display.is_displaying_page: page_lights
+          then:
+            - homeassistant.service:
+                service: light.turn_on
+                data:
+                  entity_id: ${lights_entity}
+                  brightness_pct: !lambda 'return id(rotaryencoder).state * ${brightness_step};'
     on_anticlockwise:
-       - rtttl.play: quick_d:d=4,o=5,b=100:16d6
-       - homeassistant.service:
-           service: media_player.volume_down
-           data:
-             entity_id: ${media_player_entity}
+      - rtttl.play: quick_d:d=4,o=5,b=100:16d6
+      - if:
+          condition:
+            or:
+              - display.is_displaying_page: page1
+              - display.is_displaying_page: page_volume
+          then:
+            - homeassistant.service:
+                service: media_player.volume_set
+                data:
+                  entity_id: ${media_player_entity}
+                  volume_level: !lambda 'return id(rotaryencoder).state * ${volume_step} / 100.0;'
+            - display.page.show: page_volume
+            - globals.set:
+                id: volume_overlay_timer
+                value: '2'
+      - if:
+          condition:
+            - display.is_displaying_page: page_lights
+          then:
+            - homeassistant.service:
+                service: light.turn_on
+                data:
+                  entity_id: ${lights_entity}
+                  brightness_pct: !lambda 'return id(rotaryencoder).state * ${brightness_step};'
 
-
-  
   - platform: homeassistant
     name: "Media Volume"
     id: "beam_volume"
@@ -236,12 +518,17 @@ sensor:
   - platform: homeassistant
     name: "Air Temperature"
     id: "air_temp"
-    entity_id: weather.alison_way
+    entity_id: ${weather_entity}
     attribute: temperature
     internal: true
-    
-  
-    
+
+  - platform: homeassistant
+    name: "Office Lights Brightness"
+    id: "office_lights_brightness"
+    entity_id: ${lights_entity}
+    attribute: brightness
+    internal: true
+
 light:
   - platform: monochromatic
     id: backlight
@@ -273,32 +560,25 @@ text_sensor:
     entity_id: ${media_player_entity}
     attribute: is_volume_muted
     internal: true
-    on_value:
-      then:
-        - component.update: my_lcd
   - platform: homeassistant
     name: "Media State"
     id: "mediastate"
     entity_id: ${media_player_entity}
     internal: true
-    on_value:
-      then:
-        - component.update: my_lcd
   - platform: homeassistant
     name: "Now Playing"
     id: "now_playing"
     entity_id: ${media_player_entity}
     attribute: media_title
     internal: true
-    on_value:
-      then:
-        - component.update: my_lcd
   - platform: homeassistant
     name: "Artist"
     id: "now_playing_artist"
     entity_id: ${media_player_entity}
     attribute: media_artist
     internal: true
-    on_value:
-      then:
-        - component.update: my_lcd
+  - platform: homeassistant
+    name: "Office Lights State"
+    id: "office_lights_state"
+    entity_id: ${lights_entity}
+    internal: true
